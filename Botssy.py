@@ -18,9 +18,9 @@ PAYLOAD = {
     "rent_high": "",
     "floorspace_low": "",
     "floorspace_high": "",
-    "shisya": "80",  # 関西支社
-    "danchi": "223",
-    "shikibetu": "0",  # 全部屋種
+    "shisya": "80",
+    "danchi": "191",
+    "shikibetu": "0",
     "newBukkenRoom": "",
     "orderByField": "0",
     "orderBySort": "0",
@@ -30,7 +30,6 @@ PAYLOAD = {
 
 RUN_COUNTER_FILE = "run_count.txt"
 CLEAR_EVERY = 8
-
 
 # === Room Data ===
 @dataclass
@@ -44,108 +43,59 @@ class Room:
     floor: str
     url: str
 
-
 # === Fetch Room List ===
 def fetch_room_list() -> list[Room]:
     try:
         res = requests.post(API_URL, headers=HEADERS, data=PAYLOAD, timeout=10)
         res.raise_for_status()
         room_data = res.json()
-    except Exception:
+    except Exception as e:
+        print(f"❌ Failed to fetch: {e}")
         return []
 
     room_list = []
     if not room_data:
         return room_list
-    # print (f"rommdata: {room_data}")
+
     for r in room_data:
-        room = Room(id=r.get("id", ""),
-                    name=r.get("name", ""),
-                    rent=r.get("rent", ""),
-                    fee=r.get("commonfee", ""),
-                    layout=r.get("type", ""),
-                    size=html.unescape(r.get("floorspace",
-                                             "")).replace("&#13217;", "㎡"),
-                    floor=r.get("floor", ""),
-                    url=f"https://www.ur-net.go.jp{r.get('roomDetailLink')}"
-                    if r.get("roomDetailLink") else "N/A")
+        room = Room(
+            id=r.get("id", ""),
+            name=r.get("name", ""),
+            rent=r.get("rent", ""),
+            fee=r.get("commonfee", ""),
+            layout=r.get("type", ""),
+            size=html.unescape(r.get("floorspace", "")).replace("&#13217;", "㎡"),
+            floor=r.get("floor", ""),
+            url=f"https://www.ur-net.go.jp{r.get('roomDetailLink')}" if r.get("roomDetailLink") else "N/A"
+        )
         room_list.append(room)
     return room_list
 
-
-# === Cache Handling ===
-def load_cached_urls() -> set[str]:
-    if not os.path.exists(CACHE_FILE):
-        return set()
-    with open(CACHE_FILE, "r", encoding="utf-8") as f:
-        return set(line.strip() for line in f)
-
-
-def save_cached_urls(urls: set[str]):
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        for url in urls:
-            f.write(url + "\n")
-
-
 # === Discord Notification ===
 def send_discord_notification(room: Room):
-    message = (f"🏠 **{room.name}**\n"
-               f"💴 家賃: {room.rent}（共益費: {room.fee}）\n"
-               f"📐 間取り: {room.layout} | 面積: {room.size} | 階: {room.floor}\n"
-               f"🔗 {room.url}\n"
-               f"`ID: {room.id}`")
+    message = (
+        f"🏠 **{room.name}**\n"
+        f"💴 家賃: {room.rent}（共益費: {room.fee}）\n"
+        f"📐 間取り: {room.layout} | 面積: {room.size} | 階: {room.floor}\n"
+        f"🔗 {room.url}\n"
+        f"`ID: {room.id}`"
+    )
     try:
-        res = requests.post(DISCORD_WEBHOOK_URL,
-                            json={"content": message},
-                            timeout=5)
+        res = requests.post(DISCORD_WEBHOOK_URL, json={"content": message}, timeout=5)
         if res.status_code != 204:
-            with open("error_log.txt", "a", encoding="utf-8") as f:
-                f.write(f"❌ Failed to send: {res.status_code} {res.text}\n")
+            print(f"❌ Failed to send: {res.status_code} {res.text}")
     except Exception as e:
-        with open("error_log.txt", "a", encoding="utf-8") as f:
-            f.write(f"❌ Exception: {e}\n")
-
-
-def clear_cache_every_n_runs():
-    count = 0
-    if os.path.exists(RUN_COUNTER_FILE):
-        with open(RUN_COUNTER_FILE, "r") as f:
-            try:
-                count = int(f.read().strip())
-            except ValueError:
-                count = 0
-
-    count += 1
-
-    if count >= CLEAR_EVERY:
-
-        # Clear cache
-        open(CACHE_FILE, "w").close()
-        count = 0  # Reset counter
-
-    with open(RUN_COUNTER_FILE, "w") as f:
-        f.write(str(count))
-
+        print(f"❌ Exception while sending: {e}")
 
 # === Main ===
 def main():
-    clear_cache_every_n_runs()
     rooms = fetch_room_list()
     if not rooms:
         return
 
-    cached_urls = load_cached_urls()
-    new_rooms = [room for room in rooms if room.url not in cached_urls]
-
-    if not new_rooms:
-        return
-
-    for room in new_rooms:
+    for room in rooms:
         send_discord_notification(room)
-        time.sleep(1)
-    updated_cache = cached_urls.union(room.url for room in new_rooms)
-    save_cached_urls(updated_cache)
-
+        time.sleep(1)  # Delay to avoid Discord rate limits
 
 if __name__ == "__main__":
     main()
